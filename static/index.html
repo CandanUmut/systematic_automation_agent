@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Agent Dashboard</title>
+<link rel="preconnect" href="https://cdn.socket.io/">
+<style>
+  :root{
+    --grad:linear-gradient(135deg,#667eea 0%,#764ba2 100%);
+    --card:#fffffffa;
+  }
+  *{box-sizing:border-box;margin:0}
+  body{
+      font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+      background:var(--grad);
+      min-height:100vh;color:#333}
+  h1{color:#fff;text-align:center;margin:36px 0 28px}
+  .wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+  .panel{
+      background:var(--card);border-radius:14px;padding:26px;margin-bottom:26px;
+      box-shadow:0 10px 26px rgba(0,0,0,.08)}
+  h2{margin-bottom:18px;font-size:1.35rem;color:#4a5568}
+  label{font-weight:600;display:block;margin:14px 0 6px}
+  select,input,button,textarea{
+      font:inherit;padding:10px 14px;border-radius:7px}
+  select,input,textarea{border:2px solid #e2e8f0;width:100%}
+  textarea{resize:vertical;min-height:70px}
+  button{
+      cursor:pointer;border:none;background:#667eea;color:#fff;margin:8px 8px 0 0}
+  button.secondary{background:#48bb78}
+  button.danger{background:#e53e3e}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .status{
+      display:inline-block;width:12px;height:12px;border-radius:50%;
+      margin-right:6px}
+  .online{background:#48bb78}.offline{background:#f56565}.proc{background:#ed8936}
+  #log{
+      max-height:260px;overflow-y:auto;font:13px/1.45 "Courier New",monospace;
+      background:#fafafa;border:1px solid #e2e8f0;border-radius:6px;padding:10px}
+  #log div{margin-bottom:4px;white-space:pre-wrap}
+  #answer{white-space:pre-wrap;background:#f1f5f9;border:1px solid #e2e8f0;
+          padding:10px;border-radius:6px;min-height:64px;margin-top:8px}
+  .caps-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:8px}
+  .cap-item{background:#f8f9fa;border:1px solid #e2e8f0;border-radius:6px;padding:10px}
+  /* type‑writer caret */
+  #answer[data-stream="on"]::after{
+    content: '▍';
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink{50%{opacity:0}}
+</style>
+</head>
+<body>
+<h1>🤖 AI Agent Dashboard</h1>
+<div class="wrap">
+
+  <!-- ── Control & status ───────────────────────────────────── -->
+  <div class="panel">
+    <h2>🔧 System & Operator‑Web</h2>
+
+    <!-- Ollama -->
+    <label>Ollama status</label>
+    <div>
+      <span class="status offline" id="stDot"></span>
+      <span id="stTxt">Disconnected</span>
+    </div>
+
+    <label style="margin-top:18px">Local models</label>
+    <select id="modelSel"><option disabled selected>—</option></select>
+
+    <button id="btnOllama" style="margin-top:14px">Connect to Ollama</button>
+
+    <!-- Quick prompt -->
+    <label style="margin-top:26px">Ask model</label>
+    <input id="prompt" placeholder="Type a question & hit Ask">
+    <button id="btnAsk" class="secondary" style="margin-top:8px">🤖 Ask</button>
+    <div id="answer"></div>
+
+    <hr style="margin:32px 0">
+
+    <!-- Operator‑Web tests -->
+    <label>Saved tests</label>
+    <select id="testsSel"><option disabled selected>Loading…</option></select>
+
+    <button id="btnRun" class="secondary" disabled>▶ Run test</button>
+  </div>
+
+  <!-- ── Capabilities toggle ────────────────────────────────── -->
+  <div class="panel">
+    <h2>⚙️ Capabilities</h2>
+    <div id="caps" class="caps-grid"></div>
+    <button id="saveCaps" class="secondary" style="margin-top:18px">💾 Save</button>
+  </div>
+
+  <!-- ── Scheduler ──────────────────────────────────────────── -->
+  <div class="panel">
+    <h2>🕑 Scheduler</h2>
+    <label>Select workflow / test</label>
+    <select id="schedTarget"><option disabled selected>Loading…</option></select>
+
+    <label style="margin-top:14px">Cron expression (UTC)</label>
+    <input id="cron" placeholder="*/5 * * * *">
+
+    <button id="btnSchedule" class="secondary" style="margin-top:14px">⏰ Schedule</button>
+  </div>
+
+  <!-- ── Code sandbox ───────────────────────────────────────── -->
+  <div class="panel">
+    <h2>💻 Code Sandbox</h2>
+    <label>Language</label>
+    <select id="lang"><option>python</option><option>node</option></select>
+
+    <label style="margin-top:14px">Source code</label>
+    <textarea id="code" spellcheck="false">print("hello")</textarea>
+
+    <button id="btnExec" class="secondary">▶ Run snippet</button>
+    <button id="btnKill" class="danger" disabled>✖ Stop</button>
+  </div>
+  <!-- ── Last run results ───────────────────────────────────── -->
+  <div class="panel">
+    <h2>🖼️ Run Results</h2>
+    <table id="resTbl" style="width:100%;font-size:13px;border-collapse:collapse">
+      <thead style="background:#edf2f7">
+        <tr><th>#</th><th>action</th><th>status</th><th>artefacts</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <!-- ── Live log ───────────────────────────────────────────── -->
+  <div class="panel">
+    <h2>📋 Live Log</h2>
+    <div id="log"><div>[system] UI loaded</div></div>
+  </div>
+</div>
+
+<script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+<script>
+/*****************************************************************
+ *  config / helpers
+ *****************************************************************/
+const API   = "";                    // same‑origin calls to agent.py
+const WSURL = location.origin;
+const $ = sel => document.querySelector(sel);
+const socket = io(WSURL);
+
+/*****************************************************************
+ *  logger
+ *****************************************************************/
+function log(msg, clr=""){
+  const div=document.createElement("div");
+  if(clr) div.style.color=clr;
+  div.textContent=msg;
+  $("#log").appendChild(div);
+  $("#log").scrollTop = $("#log").scrollHeight;
+}
+socket.on("log",d=>log(d.msg));
+
+
+
+/* --------------------------------------------
+   artefact helpers  (point to Operator‑Web)
+-------------------------------------------- */
+const OW = "http://10.0.0.211:5000";      // <‑‑ your OW base
+
+function artefactLink(fname, label){
+  return `<a href="${OW}/file/${fname}" target="_blank">${label}</a>`;
+}
+function thumbImg(fname){
+  return `<a href="${OW}/file/${fname}" target="_blank">
+            <img src="${OW}/file/${fname}" width="120">
+          </a>`;
+}
+async function showDom(fname){
+  domDlg.style.display='block';
+  domBox.textContent = await (await fetch(`${OW}/file/${fname}`)).text();
+}
+
+
+/* render test results in the table */
+function renderResults(list){
+  const tbody = $("#resTbl tbody");
+  tbody.innerHTML = list.map(r=>{
+    const fn = p => p ? p.split('/').pop() : null;
+    const png  = fn(r.screenshot);
+    const diff = fn(r.diff_img);
+    const dom  = fn(r.dom);
+    return `<tr>
+       <td>${r.step}</td>
+       <td>${r.action}</td>
+       <td style="color:${r.status=='pass'?'green':'red'}">${r.status}</td>
+       <td>
+         ${png  ? thumbImg(png) : ''}
+         ${diff ? `<br><small style="color:red">${r.diff_pct}% diff –
+                     ${artefactLink(diff,'view')}</small>` : ''}
+         ${dom  ? `<br><button onclick="showDom('${dom}')">DOM</button>` : ''}
+       </td>
+    </tr>`;
+  }).join("");
+}
+
+
+
+/*****************************************************************
+ *  Ollama
+ *****************************************************************/
+async function loadModels(){
+  try{
+    const {models=[]}= await (await fetch(API+"/ollama/models")).json();
+    $("#modelSel").innerHTML = models.map(m=>`<option>${m.name}</option>`).join("");
+  }catch(e){ log("⚠ cannot list models","red"); }
+}
+async function connectOllama(){
+  $("#stTxt").textContent="Connecting…";
+  $("#stDot").className="status proc";
+  try{
+    await fetch(API+"/ollama/models");
+    $("#stDot").className="status online";
+    $("#stTxt").textContent="Connected";
+    log("✓ Ollama reachable");
+  }catch(e){
+    $("#stDot").className="status offline";
+    $("#stTxt").textContent="Failed";
+    log("✗ Ollama not responding","red");
+  }
+}
+
+async function askModel () {
+  const q = $("#prompt").value.trim();
+  if (!q) return;
+  $("#answer").textContent = "";              // clear last answer
+  $("#answer").dataset.stream = "on";         // turn caret on
+  log("→ " + q);
+
+  const resp = await fetch(API + "/ollama/chat", {
+    method : "POST",
+    headers: { "Content-Type": "application/json" },
+    body   : JSON.stringify({
+      model   : $("#modelSel").value,
+      stream  : true,
+      messages: [{ role: "user", content: q }]
+    })
+  });
+
+  /* -------- SSE tokenizer -------- */
+  const reader = resp.body.getReader();
+  const dec    = new TextDecoder();
+  let buffer   = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+
+    buffer += dec.decode(value, { stream: true });
+    const chunks = buffer.split("\n\n");
+    buffer = chunks.pop();                    // keep last partial
+
+    for (const raw of chunks) {
+      if (!raw.startsWith("data: ")) continue;
+      try {
+        const obj = JSON.parse(raw.slice(6));
+
+        /* ignore Ollama meta / system tokens */
+        const token = obj.message?.content || obj.response || "";
+        if (!token.trim() || token.startsWith("<")) continue;
+
+        $("#answer").textContent += token;
+      } catch { /* ignore bad chunk */ }
+    }
+  }
+
+  $("#answer").dataset.stream = "off";        // caret off
+}
+
+
+/*****************************************************************
+ *  Operator‑Web tests  (also used as scheduler targets)
+ *****************************************************************/
+async function loadTests(){
+  try{
+    const list=await (await fetch(API+"/ow/tests")).json();
+    if(!Array.isArray(list)||!list.length){
+      $("#testsSel").innerHTML='<option disabled>No tests saved</option>';
+      $("#schedTarget").innerHTML='<option disabled>No entries</option>';
+      return;
+    }
+    const opts=list.map(t=>{
+      const ts=new Date(t.ts||t.created_at).toLocaleString();
+      const name=t.name||"Untitled";
+      return `<option value="test:${t.id||t._id}">${name} — ${ts}</option>`;
+    }).join("");
+    $("#testsSel").innerHTML   = opts;
+    $("#schedTarget").innerHTML= opts;
+    $("#btnRun").disabled=false;
+    log(`Loaded ${list.length} test(s) from Operator‑Web`);
+  }catch(e){ log("⚠ cannot load tests","red"); }
+}
+async function runTest(){
+  const val = $("#testsSel").value;
+  if(!val) return;
+  const id = val.split(":")[1];
+  log("▶ running test "+id);
+
+  const res = await fetch(API+"/ow/run",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({id})
+  }).then(r=>r.json()).catch(e=>({error:e.message}));
+
+  if(res.error){ log("✗ "+res.error,"red"); return; }
+
+  log("✓ test done — "+res.status,"green");
+  if(res.results) renderResults(res.results);   // << show table
+}
+
+
+/*****************************************************************
+ *  Capabilities toggle
+ *****************************************************************/
+async function loadCaps(){
+  const caps=await (await fetch(API+"/workflow/capabilities")).json();
+  const box=$("#caps");
+  box.innerHTML = Object.entries(caps).map(([k,v])=>
+    `<label class="cap-item">
+       <input type="checkbox" data-cap="${k}" ${v.enabled?"checked":""}>
+       ${k} <small style="opacity:.7">– ${v.desc}</small>
+     </label>`
+  ).join("");
+}
+async function saveCaps(){
+  const enabled=[...document.querySelectorAll('[data-cap]:checked')]
+                .map(el=>el.dataset.cap);
+  await fetch(API+"/workflow/capabilities",{
+      method:"PATCH",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({enabled})
+  });
+  log("✓ capabilities saved","green");
+}
+
+/*****************************************************************
+ *  Scheduler (simple demo)
+ *****************************************************************/
+async function schedule(){
+  const target=$("#schedTarget").value;
+  const cron  =$("#cron").value.trim();
+  if(!target||!cron){ alert("select target & cron"); return;}
+  await fetch(API+"/schedule",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({target,cron})});
+  log(`⏰ Scheduled ${target} (${cron})`,"green");
+}
+
+/*****************************************************************
+ *  Code sandbox – run & stop
+ *****************************************************************/
+let currentExec=null;
+async function execCode(){
+  if(currentExec){ alert("Job already running"); return;}
+  const lang=$("#lang").value;
+  const code=$("#code").value;
+  const res=await fetch(API+"/exec",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({lang,code,stream:true})
+  });
+  $("#btnKill").disabled=false;
+  const reader=res.body.getReader();
+  const dec = new TextDecoder("utf-8");
+  currentExec=reader;
+  while(true){
+    const {value,done}=await reader.read();
+    if(done) break;
+    log(dec.decode(value),"#555");
+  }
+  log("▶ snippet finished","green");
+  currentExec=null;
+  $("#btnKill").disabled=true;
+}
+function killExec(){
+  if(currentExec){
+    currentExec.cancel();
+    log("✖ execution stopped","red");
+    currentExec=null;
+    $("#btnKill").disabled=true;
+  }
+}
+
+/*****************************************************************
+ *  UI bindings + boot
+ *****************************************************************/
+$("#btnOllama").onclick = connectOllama;
+$("#btnAsk").onclick    = askModel;
+$("#btnRun").onclick    = runTest;
+
+$("#saveCaps").onclick  = saveCaps;
+$("#btnSchedule").onclick = schedule;
+
+$("#btnExec").onclick   = execCode;
+$("#btnKill").onclick   = killExec;
+
+loadModels();
+loadCaps();
+loadTests();
+</script>
+<div id="domDlg" style="display:none;position:fixed;inset:0;background:#0008;
+            backdrop-filter:blur(3px);z-index:999">
+  <div style="background:#fff;border-radius:8px;padding:18px;max-width:90%;
+              max-height:90%;margin:40px auto;overflow:auto">
+    <button onclick="domDlg.style.display='none'"
+            style="float:right;border:none;background:#e53e3e;color:#fff;
+                   padding:4px 10px;border-radius:4px;cursor:pointer">✖</button>
+    <pre id="domBox" style="white-space:pre-wrap;font:12px/1.4 monospace"></pre>
+  </div>
+</div>
+
+</body>
+</html>
